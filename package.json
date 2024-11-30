@@ -1,6 +1,8 @@
 {
   "author": "Markus Plutka",
-  "maintainers": [],
+  "contributors": [
+    "Joáo Castanheira <joao.duarte353@gmail.com>"
+  ],
   "license": "MIT",
   "name": "tm-bt-led",
   "description": "A library for accessing the Thrustmaster BT LED peripheral on Windows/PC",
@@ -34,40 +36,53 @@
   ],
   "main": "./lib/test.js",
   "engines": {
-    "node": ">=6"
+    "node": ">=18"
   },
   "os": [
     "win32"
   ],
-  "bin": "lib/launcher.js",
+  "bin": "tmp/launcher.js",
   "gypfile": true,
   "dependencies": {
     "@abandonware/noble": "git+https://github.com/mplutka/noble.git",
-    "@racehub-io/f1-telemetry-client": "^0.2.11",
-    "binary-parser": "^2.2.1",
-    "convert-units": "^2.3.4",
-    "lodash": "^4.17.21",
-    "node-addon-api": "^5.1.0",
-    "node-bitarray": "^0.1.0",
-    "node-irsdk": "git+https://github.com/mplutka/node-irsdk.git",
-    "node-processlist": "^1.0.2",
-    "pkg": "^5.8.1",
-    "yargs": "^17.6.2"
+    "@racehub-io/f1-telemetry-client": "0.2.12",
+    "binary-parser": "2.2.1",
+    "convert-units": "2.3.4",
+    "lodash": "4.17.21",
+    "node-addon-api": "8.3.0",
+    "node-bitarray": "0.1.0",
+    "node-processlist": "1.0.2",
+    "pkg": "5.8.1",
+    "yargs": "17.7.2"
   },
-  "devDependencies": {},
+  "devDependencies": {
+    "@types/convert-units": "^2.3.11",
+    "@types/node": "^22.10.1",
+    "@types/yargs": "^17.0.33",
+    "@eslint/js": "^9.15.0",
+    "eslint": "^9.15.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-prettier": "^5.2.1",
+    "globals": "^15.12.0",
+    "nodemon": "^3.1.7",
+    "prettier": "3.4.1",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.16.0"
+  },
   "pkg": {
     "scripts": [
-      "clients/*.js"
+      "tmp/clients/*.js"
     ],
     "targets": [
-      "node14-win"
+      "node18-win"
     ],
     "outputPath": "dist"
   },
   "scripts": {
-    "start": "node lib/launcher.js",
+    "build:tsc": "tsc",
+    "start": "node tmp/launcher.js",
     "build": "node-gyp rebuild -C AssettoCorsaSharedMemory && node-gyp rebuild -C rF2SharedMemory && node-gyp rebuild -C r3e-api && node-gyp rebuild -C SCSSharedMemory",
-    "pack": "pkg . -C GZip"
-
+    "pack": "pkg . -C GZip",
+    "lint": "eslint ."
   }
 }

@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "moduleResolution": "node",
+    "allowJs": true,
+    "outDir": "./tmp",
+    "rootDir": "./lib",
+    "declaration": true,
+    "types": ["node"],
+  },
+  "exclude": ["eslint.config.mjs", "tmp"]
+}
