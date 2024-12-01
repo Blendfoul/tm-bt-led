@@ -7,13 +7,23 @@
  * Copyright (c) 2021 Markus Plutka
  */
 
+process.env = {
+  ...process.env,
+  DEBUG: 'noble*',
+};
+
 // @ts-expect-error - no types available
 import { getProcesses, ProcessInfo } from 'node-processlist';
-import { TmBTLed, Setup } from './tmBTLed';
+import { TmBTLed } from './tmBTLed';
 
 import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import AbstractClient from './abstractClient';
+import { setup } from './setup';
+
+import supportedGames from './games/supported-games.config.json';
+import { Game } from './types';
+import { testLauncher } from './test';
 
 type Args = {
   game?: string;
@@ -24,73 +34,6 @@ type Args = {
 };
 
 const argv = yargs(hideBin(process.argv)).argv as Args;
-
-const supportedGames = [
-  {
-    name: 'dump_udp',
-    bin: [],
-    title: ['DMPS', '   0'],
-  },
-  {
-    name: '_template',
-    bin: [],
-    title: ['TEMP', 'LATE'],
-  },
-  {
-    name: 'assetto',
-    bin: ['acc.exe', 'assettocorsa.exe'],
-    title: ['ASSETTO', 'CORSA'],
-  },
-  {
-    name: 'f1',
-    bin: [
-      'f1_2019.exe',
-      'f1_2019_dx12.exe',
-      'f1_2020.exe',
-      'f1_2020_dx12.exe',
-      'f1_2021_dx12.exe',
-      'f1_2022_dx12.exe',
-      'f1_23.exe',
-      'f1_24.exe',
-    ],
-    title: [' F1 ', '20XX'],
-  },
-  {
-    name: 'dirt',
-    bin: ['dirt3_game.exe', 'drt4.exe', 'drt.exe', 'dirtrally2.exe', 'gridlegends.exe'],
-    title: ['DIRT', 'RALLY'],
-  },
-  {
-    name: 'forza',
-    bin: ['forzamotorsport7.exe', 'forzahorizon4.exe', 'forzahorizon5.exe'],
-    title: [' FOR', 'ZA  '],
-  },
-  {
-    name: 'projectcars2',
-    bin: ['ams2avx.exe', 'ams2.exe', 'pcars3.exe', 'pcars3avx.exe', 'pcars2.exe', 'pcars2avx.exe'],
-    title: ['PROJECT', 'CARS 2'],
-  },
-  {
-    name: 'iracing',
-    bin: ['iRacingUI.exe', 'iRacingSim64DX11.exe'],
-    title: ['IRAC', 'ING'],
-  },
-  {
-    name: 'rF2',
-    bin: ['rFactor2.exe'],
-    title: ['RFAC', 'TOR2'],
-  },
-  {
-    name: 'raceroom',
-    bin: ['RRRE.exe', 'RRRE64.exe'],
-    title: ['RACE', 'ROOM'],
-  },
-  {
-    name: 'ets2',
-    bin: ['eurotrucks2.exe'],
-    title: ['EURO', 'TS 2'],
-  },
-];
 
 const excludedTasks = [
   'svchost.exe',
@@ -114,8 +57,8 @@ process.on('unhandledRejection', (reason, promise) => {
   console.error('Unhandled Rejection at:', promise, 'reason:', reason);
 });
 
-const gameExecutableMap = new Map();
-supportedGames.forEach((game) => {
+const gameExecutableMap = new Map<string, Game>();
+supportedGames.forEach((game: Game) => {
   game.bin.forEach((exe) => {
     gameExecutableMap.set(exe.toLowerCase(), game);
   });
@@ -181,7 +124,7 @@ class Launcher {
       console.log('No game running');
       if (argv.messagelights) {
         this.tmBtLed.setAllColors(true);
-        this.tmBtLed.setRevLights(100);
+        this.tmBtLed.setRevLights(50);
       }
       if (argv.message) {
         this.tmBtLed.setPerformanceMode();
@@ -207,50 +150,23 @@ class Launcher {
   };
 }
 
-class Test {
-  revReversed: boolean;
-  revPercent: number;
-  tmBtLed: TmBTLed;
-  constructor() {
-    this.revReversed = false;
-    this.revPercent = 0;
-    this.tmBtLed = new TmBTLed(this.start);
+async function main() {
+  console.log('Starting...');
+  console.debug(argv);
+
+  switch (true) {
+    case argv.test:
+      console.log('Starting test...');
+      testLauncher();
+      break;
+    case argv.setup:
+      console.log('Starting setup...');
+      await setup();
+      break;
+    default:
+      new Launcher();
+      break;
   }
-
-  start = () => {
-    this.tmBtLed.setPerformanceMode();
-    setInterval(() => {
-      this.tmBtLed.setRpm(Math.floor(Math.random() * 14001), false);
-      this.tmBtLed.setTime(Math.floor(Math.random() * 5001), true);
-      this.tmBtLed.setGear(Math.floor(Math.random() * 10));
-      if (this.revReversed) {
-        this.revPercent -= 3;
-        if (this.revPercent < 0) {
-          this.revPercent = 0;
-          this.revReversed = !this.revReversed;
-        }
-      } else {
-        this.revPercent += 3;
-        if (this.revPercent > 100) {
-          this.revPercent = 100;
-          this.revReversed = !this.revReversed;
-        }
-      }
-      this.tmBtLed.setRevLightsWithoutBlue(this.revPercent);
-      this.tmBtLed.setAllFlashing(true);
-      this.tmBtLed.setRevLightsBlueFlashing(true);
-    }, 1000 / 60);
-  };
 }
 
-let main = null;
-
-console.log(argv);
-
-if (argv.test) {
-  main = new Test();
-} else if (argv.setup) {
-  main = new Setup();
-} else {
-  main = new Launcher();
-}
+main();

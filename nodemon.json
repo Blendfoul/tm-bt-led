@@ -1,0 +1,21 @@
+{
+  "restartable": "rs",
+  "$schema": "https://json.schemastore.org/nodemon",
+  "ignore": [
+    ".git",
+    "node_modules/**/node_modules"
+  ],
+  "nodeArgs": [],
+  "verbose": true,
+  "execMap": {
+    "js": "node"
+  },
+  "watch": [
+    "tmp/**"
+  ],
+  "env": {
+    "NODE_ENV": "development",
+    "metric": true
+  },
+  "ext": "js json"
+}

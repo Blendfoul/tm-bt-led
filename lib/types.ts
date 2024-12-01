@@ -13,7 +13,7 @@ type Args = {
 
 type Metadata = {
   services: Service[];
-  characteristics: Record<string, characteristic>;
+  characteristics: Record<string, characteristic[]>;
   uuid: string;
   address: string;
   name: string;
@@ -44,4 +44,10 @@ type Data = {
   position: string;
 };
 
-export type { Callbacks, Args, Metadata, Data };
+type Game = {
+  name: string;
+  bin: string[];
+  title: string[];
+};
+
+export type { Callbacks, Args, Metadata, Data, Game };

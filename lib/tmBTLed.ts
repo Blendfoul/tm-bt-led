@@ -9,9 +9,8 @@
 
 // @ts-expect-error - no types available
 import NobleMain from '@abandonware/noble/lib/noble';
-// @ts-expect-error - no types available
 import NobleBinding from '@abandonware/noble/lib/hci-socket/bindings';
-const noble = new NobleMain(NobleBinding);
+const noble = new NobleMain(NobleBinding) as Noble;
 
 // const usb = require("usb/build/Release/usb_bindings.node");
 // import usb from "usb/prebuilds/win32-x64/node.napi.node";
@@ -25,11 +24,25 @@ import yargs from 'yargs';
 import { hideBin } from 'yargs/helpers';
 import { Args, Callbacks, Metadata } from './types';
 import { Characteristic, Peripheral } from '@abandonware/noble';
+import { Noble } from './noble';
 
 const argv = yargs(hideBin(process.argv)).argv as Args;
 
 const startTime = new Date().getTime();
-function exitHandler(message: string, exitCode: number) {
+
+function uncaughtExceptionHandler(err: Error) {
+  if (!err.message.includes('LIBUSB_TRANSFER')) {
+    console.error(err);
+    process.exit(1);
+  }
+
+  noble.reset();
+  console.log('Resetting noble...');
+
+  noble.startScanning([], true);
+}
+
+function exitHandler(message: Error) {
   if (message) {
     console.error(message);
   }
@@ -40,7 +53,7 @@ function exitHandler(message: string, exitCode: number) {
 //do something when app is closing
 process.on('exit', exitHandler);
 //catches uncaught exceptions
-process.on('uncaughtException', exitHandler);
+process.on('uncaughtException', uncaughtExceptionHandler);
 
 class TmBTLed {
   message?: string;
@@ -70,7 +83,7 @@ class TmBTLed {
 
   revLimitIntervalId?: NodeJS.Timeout | null;
   revLightsFlashingIntervalId?: NodeJS.Timeout | null;
-  revLightsFlashing = 0;
+  revLightsFlashing = false;
   revLightsOn = false;
   currentLeftButton?: number | null = null;
   currentRightButton?: number | null = null;
@@ -398,8 +411,7 @@ class TmBTLed {
     this.callbacks = callbacks;
   };
 
-  initNoble = () => {
-    const myself = this;
+  initNoble() {
     noble.stopScanning();
 
     noble.on('stateChange', function (state: string) {
@@ -412,7 +424,7 @@ class TmBTLed {
     });
 
     let discovered = false;
-    noble.on('discover', function (peripheral: Peripheral) {
+    noble.on('discover', (peripheral: Peripheral) => {
       if (!discovered) {
         console.log('Discovering devices. Please press both pair buttons now...');
         discovered = true;
@@ -425,12 +437,12 @@ class TmBTLed {
           if (!err) {
             console.log(` -- Found device config ${peripheral.uuid}`);
 
-            myself.quickConnect(peripheral);
+            this.quickConnect(peripheral);
           }
         },
       );
     });
-  };
+  }
 
   showTemporary = (message: string, rightMessage: string = '') => {
     this.message = message;
@@ -482,7 +494,7 @@ class TmBTLed {
     p.connect(async (error) => {
       if (error) {
         console.log(`Connect error: ${error}`);
-        noble.startScanning([], true);
+        noble.startScanning([], false);
         return;
       }
 
@@ -490,40 +502,37 @@ class TmBTLed {
 
       this.peripheral.on('disconnect', () => {
         console.log('Disconnected. Restarting scan...');
-        noble.reset();
-        noble.startScanning([p.uuid], true);
+        this.peripheral = null;
+        noble.startScanning([], false);
       });
 
-      this.peripheral?.discoverAllServicesAndCharacteristics((error, services, characteristics) => {
+      this.peripheral?.discoverAllServicesAndCharacteristics(() => {
         noble.on('connectionParameterUpdateRequest', (minInterval: number, maxInterval: number) => {
-          console.log('Refresh interval was forcefully set to ', maxInterval, ' ms');
+          console.log(`Connection parameter update request: ${minInterval} ${maxInterval}`);
           this.updateInterval = maxInterval;
           if (this.intervalId) {
             console.log('Restarting loop...');
-            try {
-              this.startLoop();
-            } catch (error) {
-              noble.reset();
-            }
+            this.startLoop();
           }
         });
 
         noble.on(
           'connectionUpdateCompleted',
           (
-            status: number,
-            handle: number,
-            interval: number,
+            minInterval: number,
+            maxInterval: number,
             latency: number,
             supervisionTimeout: number,
           ) => {
-            console.log('Refresh interval has been changed to ', interval, ' ms');
-            this.updateInterval = interval;
-            try {
-              this.startLoop();
-            } catch (error) {
-              noble.reset();
-            }
+            console.log({
+              minInterval,
+              maxInterval,
+              latency,
+              supervisionTimeout,
+            });
+
+            this.updateInterval = latency;
+            this.startLoop();
           },
         );
 
@@ -532,7 +541,7 @@ class TmBTLed {
         }
 
         const meta = this.loadData(this.peripheral);
-        const [report1, report2, report3, report4] = this.setData(this.peripheral, meta);
+        const [report1] = this.setData(this.peripheral, meta);
 
         if (!report1) {
           // Report 1
@@ -570,23 +579,58 @@ class TmBTLed {
     this.peripheral.connUpdateLe(125, 250, 0, 3000);
   };
 
-  startLoop = () => {
-    const _this = this;
-    if (_this.intervalId) {
-      console.log('Stopping running loop...');
-      clearInterval(_this.intervalId);
-    }
-
-    console.log('Starting loop with refresh interval: ', this.updateInterval, ' ms...');
-
-    const sentBuffer = Buffer.alloc(_this.buffer.length);
-    this.intervalId = setInterval(() => {
-      if (!sentBuffer.equals(_this.buffer)) {
-        _this.peripheral?.writeHandle('58' as unknown as Buffer, _this.buffer, true, () => {});
-        _this.buffer.copy(sentBuffer);
+  startLoop() {
+    try {
+      // Stop the existing loop if it is running
+      if (this.intervalId) {
+        console.log('Stopping running loop...');
+        clearInterval(this.intervalId);
+        this.intervalId = null; // Ensure the reference is cleared
       }
-    }, this.updateInterval);
-  };
+
+      // Validate update interval
+      if (typeof this.updateInterval !== 'number' || this.updateInterval <= 0) {
+        console.error('Invalid update interval:', this.updateInterval);
+        throw new Error('Update interval must be a positive number');
+      }
+
+      console.log('Starting loop with refresh interval:', this.updateInterval, 'ms...');
+
+      // Initialize a buffer to track changes
+      const sentBuffer = Buffer.alloc(this.buffer.length);
+
+      // Start the interval
+      this.intervalId = setInterval(() => {
+        try {
+          // Check if the buffer has changed
+          if (!sentBuffer.equals(this.buffer)) {
+            if (this.peripheral?.writeHandle) {
+              // Validate `writeHandle` operation
+              this.peripheral.writeHandle(
+                Buffer.from('58'), // Ensure correct buffer format
+                this.buffer,
+                true,
+                (error) => {
+                  if (error) {
+                    console.error('Error writing to handle:', error);
+                  }
+                },
+              );
+            } else {
+              console.warn('Peripheral or writeHandle is not available.');
+            }
+
+            // Copy the new buffer content
+            this.buffer.copy(sentBuffer);
+          }
+        } catch (error) {
+          console.error('Error during interval execution:', error);
+        }
+      }, this.updateInterval);
+    } catch (error) {
+      console.error('Error in startLoop:', error);
+    }
+  }
 
   printLine = (line: string) => {
     // @ts-expect-error - no types available
@@ -681,82 +725,70 @@ class TmBTLed {
    * Will be used by game specific scripts
    * Boolean parameter "right" display data on the right screen
    */
+  setGear(gear: number | null) {
+    // Gear codes mapped to their binary representations
+    const gearCodes = new Map<number | null, string>([
+      [-1, '1001100'], // Reverse
+      [0, '1001000'], // Neutral
+      [1, '1111001'],
+      [2, '0100100'],
+      [3, '0110000'],
+      [4, '0011001'],
+      [5, '0010010'],
+      [6, '0000011'],
+      [7, '1111000'],
+      [8, '0000000'],
+      [9, '0011000'],
+      [null, '1000000'], // Default for 0
+    ]);
 
-  setGear = (gear: number) => {
-    let gearCode = '1111111';
-    switch (gear) {
-      case -1:
-        gearCode = '1001100';
-        break;
-      case 0:
-        gearCode = '1001000'; // <- N
-        break;
-      case 1:
-        gearCode = '1111001';
-        break;
-      case 2:
-        gearCode = '0100100';
-        break;
-      case 3:
-        gearCode = '0110000';
-        break;
-      case 4:
-        gearCode = '0011001';
-        break;
-      case 5:
-        gearCode = '0010010';
-        break;
-      case 6:
-        gearCode = '0000011';
-        break;
-      case 7:
-        gearCode = '1111000';
-        break;
-      case 8:
-        gearCode = '0000000';
-        break;
-      case 9:
-        gearCode = '0011000';
-        break;
-      case null:
-        gearCode = '1000000'; // <- 0
-        break;
-      case undefined:
-      // @ts-expect-error - weird but necessary
-      case false:
-      default:
-        gearCode = '1111111';
-        break;
+    // Get the gear code or fallback to default '1111111' (blank)
+    const gearCode = gearCodes.get(gear) ?? '1111111';
+
+    // Log a warning if the gear value is unexpected
+    if (!gearCodes.has(gear) && gear !== undefined) {
+      console.warn(`Unrecognized gear value: ${gear}. Defaulting to '1111111'.`);
     }
-    this.setLedSegments('gear', gearCode);
-  };
 
-  setNumber = (numberString: string, right: boolean) => {
-    const chars = (numberString || '').split('');
-    const slots = [];
+    // Update the LED segments
+    this.setLedSegments('gear', gearCode);
+  }
+
+  setNumber(numberString: string, right: boolean = false) {
+    const chars = Array.from(numberString || '');
+    const slots: string[] = [];
+
+    // Group characters with dots
     for (let i = 0; i < chars.length; i++) {
-      if (i < chars.length - 1 && (chars[i + 1] === '.' || chars[i + 1] === ',')) {
+      if (chars[i + 1] === '.' || chars[i + 1] === ',') {
         slots.push(chars[i] + '.');
         i++;
       } else {
         slots.push(chars[i]);
       }
     }
+
+    // Pad slots to fit the display size
     while (slots.length < 4) {
       slots.unshift(' ');
     }
-    for (let i = 0; i < Math.min(4, slots.length); i++) {
-      const splittedChar = (slots[i] || '').split('');
-      const char =
-        TmBTLed.CharMap[splittedChar[0] as keyof typeof TmBTLed.CharMap] || TmBTLed.CharMap[' '];
-      const withDot = splittedChar.length === 2 && splittedChar[1] === '.';
-      this.setLedSegments((right ? 'right' : 'left') + 'Char' + (i + 1), char, withDot);
-    }
-  };
 
-  setRevLightsFlashing = (flashStatus: number) => {
-    if (flashStatus === 0 && this.revLightsFlashing !== 0) {
-      this.revLightsFlashing = 0;
+    // Update LED segments
+    slots.slice(0, 4).forEach((char, index) => {
+      const [baseChar, dot] = char.split('');
+      const mappedChar =
+        TmBTLed.CharMap[baseChar as keyof typeof TmBTLed.CharMap] || TmBTLed.CharMap[' '];
+      const hasDot = dot === '.';
+      this.setLedSegments(`${right ? 'right' : 'left'}Char${index + 1}`, mappedChar, hasDot);
+    });
+  }
+
+  setRevLightsFlashing(flashStatus: boolean, overrideInterval?: boolean) {
+    if (flashStatus === this.revLightsFlashing) return;
+
+    // Stop flashing if status is 0
+    if (!flashStatus) {
+      this.revLightsFlashing = false;
       this.setRevLights(0);
       if (this.revLightsFlashingIntervalId !== null) {
         clearInterval(this.revLightsFlashingIntervalId);
@@ -764,24 +796,16 @@ class TmBTLed {
       }
       return;
     }
-    if (flashStatus == this.revLightsFlashing) {
-      return;
-    }
 
+    // Start flashing with appropriate interval
     this.revLightsFlashing = flashStatus;
-    if (this.revLightsFlashingIntervalId !== null) {
-      clearInterval(this.revLightsFlashingIntervalId);
-      this.revLightsFlashingIntervalId = null;
-    }
-    this.revLightsFlashingIntervalId = setInterval(
-      () => {
-        this.toggleRevLights();
-      },
-      this.revLightsFlashing === 1 ? 500 : 250,
-    );
-  };
+    if (this.revLightsFlashingIntervalId) clearInterval(this.revLightsFlashingIntervalId);
 
-  setRevLightsBlueFlashing = (shouldFlash: boolean) => {
+    const interval = overrideInterval ? 50 : flashStatus ? 500 : 250;
+    this.revLightsFlashingIntervalId = setInterval(() => this.toggleRevLights(), interval);
+  }
+
+  setRevLightsBlueFlashing(shouldFlash: boolean, overrideInterval = 100) {
     if (!shouldFlash) {
       this.setRevLightsBlue(0);
       if (this.revLightsBlueFlashingIntervalId !== null) {
@@ -802,8 +826,8 @@ class TmBTLed {
     }
     this.revLightsBlueFlashingIntervalId = setInterval(() => {
       this.toggleRevLightsBlue();
-    }, 100);
-  };
+    }, overrideInterval);
+  }
 
   setRevLights = (percent: number) => {
     if (percent > 100) {
@@ -1150,7 +1174,7 @@ class TmBTLed {
     this.setAllColors(false);
     this.setAllFlashing(false);
     this.setRevLights(0);
-    this.setRevLightsFlashing(0);
+    this.setRevLightsFlashing(false);
     this.setGearDotFlashing(0);
     this.resetBuffer();
     this.clearTickerInterval();
@@ -1161,7 +1185,7 @@ class TmBTLed {
     this.updateBuffer();
   };
 
-  setBit = (bit: number, on: any, inverted = false) => {
+  setBit = (bit: number, on: boolean, inverted = false) => {
     this.bitArray[bit] = on ? (inverted ? 0 : 1) : inverted ? 1 : 0;
     this.updateBuffer();
   };
@@ -1256,11 +1280,11 @@ class TmBTLed {
     }
   };
 
-  updateLeftDisplay = (str: string, isNumber = false) => {
+  updateLeftDisplay = (str: string) => {
     if (this.overrideTimerLeftDisplay !== null) {
       return;
     }
-    if (str.match(/[\.\d]/)) {
+    if (str.match(/[.\d]/)) {
       this.setNumber(str, false);
     } else {
       this.setLeftDisplay(str);
@@ -1348,7 +1372,7 @@ class TmBTLed {
       return;
     }
 
-    if (str.match(/[\.\d]+/) !== null) {
+    if (str.match(/[.\d]+/) !== null) {
       this.setNumber(str, true);
     } else {
       this.setRightDisplay(str);
@@ -1434,7 +1458,7 @@ class TmBTLed {
     this.setBit(TmBTLed.BitRanges['rightTimeSpacer'][0], on);
   };
 
-  setTimeSpacer = (on: boolean, right: any) => {
+  setTimeSpacer = (on: boolean, right: boolean) => {
     if (right) {
       this.setRightTimeSpacer(on);
     } else {
@@ -1446,7 +1470,7 @@ class TmBTLed {
     this.flipBit(TmBTLed.BitRanges['rightTimeSpacer'][0]);
   };
 
-  setLeftBlue = (on: any) => {
+  setLeftBlue = (on: boolean) => {
     this.setBit(TmBTLed.BitRanges['leftBlue'][0], on);
   };
 
@@ -1454,7 +1478,7 @@ class TmBTLed {
     this.flipBit(TmBTLed.BitRanges['leftBlue'][0]);
   };
 
-  setRightBlue = (on: any) => {
+  setRightBlue = (on: boolean) => {
     this.setBit(TmBTLed.BitRanges['rightBlue'][0], on);
   };
 
@@ -1470,7 +1494,7 @@ class TmBTLed {
     this.flipBit(TmBTLed.BitRanges['rightBlue'][0]);
   };
 
-  setLeftRed = (on: any) => {
+  setLeftRed = (on: boolean) => {
     this.setBit(TmBTLed.BitRanges['leftRed'][0], on);
   };
   toggleLeftRed = () => {
@@ -1680,66 +1704,4 @@ class TmBTLed {
   };
 }
 
-class Setup {
-  constructor() {
-    this.initNoble();
-  }
-
-  initNoble = () => {
-    const _this = this;
-    noble.stopScanning();
-
-    noble.on('stateChange', function (state: string) {
-      if (state === 'poweredOn') {
-        console.log('Starting scan...');
-        noble.startScanning();
-      } else {
-        console.log('Stopping scan...');
-        noble.stopScanning();
-        // process.exit(0);
-      }
-    });
-
-    let discovered = false;
-    noble.on('discover', function (peripheral: { uuid: string }) {
-      if (!discovered) {
-        console.log('Discovering devices. Please press both pair buttons now...');
-        discovered = true;
-      }
-
-      if (peripheral.uuid.match(/^0008.*/)) {
-        noble.stopScanning();
-        console.log('Found device ', peripheral.uuid, '. Writing dump...');
-        _this.writeDump(peripheral.uuid);
-      }
-    });
-  };
-
-  writeDump = async (uuid: string) => {
-    const template = await import(`${__dirname}/config/0008d3aabbcc.json`);
-    const data = {
-      ...template,
-      uuid,
-      address: template.address.replace(
-        '00:08:d3:aa:bb:cc',
-        uuid
-          .split(':')
-          .map((c, i) => uuid[i * 2] + uuid[i * 2 + 1])
-          .join(':'),
-      ),
-    };
-
-    fs.writeFile(`${__dirname}/config/${uuid}.json`, JSON.stringify(data), (err) => {
-      if (err) {
-        console.error("Could't write dump. Please create dump manually.", err);
-        process.exit();
-      }
-      console.log(
-        'Dump written successfully. Run test.bat for a demo or run.bat for autodetect game mode.',
-      );
-      process.exit();
-    });
-  };
-}
-
-export { TmBTLed, Setup };
+export { TmBTLed };

@@ -1,7 +1,7 @@
 {
   "arrowParens": "always",
   "bracketSameLine": false,
-  "endOfLine": "lf",
+  "endOfLine": "crlf",
   "bracketSpacing": true,
   "semi": true,
   "singleQuote": true,

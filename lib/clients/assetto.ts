@@ -16,7 +16,16 @@ import path from 'path';
 import AbstractClient from '../abstractClient';
 
 const loadableConfigName = 'assetto.config.jsonc';
-const defaultConfig = {
+
+type Config = {
+  leftModes: string[];
+  rightModesAcc: string[];
+  rightModesAssetto: string[];
+  blueRevLightsIndicateShift: boolean;
+  flashingRevLightsIndicateShit: boolean;
+};
+
+const defaultConfig: Config = {
   leftModes: ['SPEED', 'RPM', 'FUEL', 'TYRETEMP', 'BRAKETEMP'],
   rightModesAcc: [
     'LAPTIME',
@@ -29,13 +38,15 @@ const defaultConfig = {
     'LAPS LEFT',
   ],
   rightModesAssetto: ['LAPTIME', 'LAST LAP', 'BEST LAP', 'POSITION', 'LAP', 'LAPS LEFT'],
+  blueRevLightsIndicateShift: false,
+  flashingRevLightsIndicateShit: true,
 };
 
 class ACC extends AbstractClient {
   maxRpm: number;
   isACC: boolean;
   refreshInterval: NodeJS.Timeout | null;
-  config: any;
+  config: Config;
   modeMapping: {
     SPEED: (onRight: boolean) => void;
     RPM: (onRight: boolean) => void;
@@ -155,6 +166,7 @@ class ACC extends AbstractClient {
       this.handleRevLights();
       this.handleEngineStatus();
       this.handleFlags();
+      this.handleAssists();
 
       // Update displays based on current modes
       this.updateDisplay(this.currentLeftMode, this.leftModes, false);
@@ -165,26 +177,37 @@ class ACC extends AbstractClient {
   }
 
   handleRevLights() {
-    if (this.physics.pitLimiterOn === 1 || this.graphics.isInPitLane || this.graphics.isInPit) {
-      this.tmBtLed.setRevLightsFlashing(1);
-    } else {
-      this.tmBtLed.setRevLightsFlashing(0);
-    }
+    this.tmBtLed.setRevLightsFlashing(
+      this.physics.pitLimiterOn === 1 || this.graphics.isInPitLane || this.graphics.isInPit,
+    );
 
-    if (this.tmBtLed.revLightsFlashing !== 1) {
+    if (!this.tmBtLed.revLightsFlashing) {
       let rpmPercent = (this.physics.rpms / this.statics.maxRpm) * 100;
 
-      if (this.config.blueRevLightsIndicateShift) {
-        this.tmBtLed.setRevLightsWithoutBlue(rpmPercent);
+      switch (true) {
+        case this.config.blueRevLightsIndicateShift:
+          this.tmBtLed.setRevLightsWithoutBlue(rpmPercent);
 
-        if (rpmPercent >= 99) {
-          this.tmBtLed.setRevLightsBlueFlashing(true);
-        } else {
-          this.tmBtLed.setRevLightsBlueFlashing(false);
-        }
-      } else {
-        rpmPercent = rpmPercent < 50 ? 0 : ((rpmPercent - 50) / 50) * 100;
-        this.tmBtLed.setRevLights(rpmPercent >= 98 ? 100 : rpmPercent);
+          if (rpmPercent >= 99) {
+            this.tmBtLed.setRevLightsBlueFlashing(true);
+          } else {
+            this.tmBtLed.setRevLightsBlueFlashing(false);
+          }
+          break;
+        case this.config.flashingRevLightsIndicateShit:
+          if (rpmPercent <= 90) {
+            this.tmBtLed.setRevLights(rpmPercent);
+            if (this.tmBtLed.revLightsBlueFlashing) this.tmBtLed.setRevLightsBlueFlashing(false);
+            return;
+          }
+
+          this.tmBtLed.setRevLightsWithoutBlue(rpmPercent);
+          this.tmBtLed.setRevLightsBlueFlashing(true, 50);
+          break;
+        default:
+          rpmPercent = rpmPercent < 50 ? 0 : ((rpmPercent - 50) / 50) * 100;
+          this.tmBtLed.setRevLights(rpmPercent >= 98 ? 100 : rpmPercent);
+          break;
       }
     }
   }
@@ -215,6 +238,15 @@ class ACC extends AbstractClient {
         this.tmBtLed.setFlashingRed(false);
         break;
     }
+  }
+
+  handleAssists() {
+    const absActive = this.physics.abs > 0.1;
+    const tcActive = this.physics.tc > 0.1;
+
+    this.tmBtLed.setBlue(absActive);
+    this.tmBtLed.setRed(tcActive);
+    this.tmBtLed.setYellow(absActive || tcActive);
   }
 
   updateDisplay(currentModeIndex: number, modesArray: string[], isRightDisplay: boolean) {
